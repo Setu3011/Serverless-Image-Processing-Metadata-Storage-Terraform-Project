@@ -1,0 +1,49 @@
+import json
+import os
+import uuid
+import boto3
+from datetime import datetime
+
+s3 = boto3.client('s3')
+ddb = boto3.resource('dynamodb')
+
+TABLE_NAME = os.environ.get('DDB_TABLE', 'image-metadata')
+
+def lambda_handler(event, context):
+    print('Event received:', json.dumps(event))
+
+    table = ddb.Table(TABLE_NAME)
+    records = event.get('Records', [])
+
+    for rec in records:
+        try:
+            s3_info = rec.get('s3', {})
+            bucket = s3_info['bucket']['name']
+            key = s3_info['object']['key']
+
+            head = s3.head_object(Bucket=bucket, Key=key)
+            size = head.get('ContentLength')
+            content_type = head.get('ContentType')
+
+            image_id = str(uuid.uuid4())
+            upload_time = datetime.utcnow().isoformat() + 'Z'
+
+            item = {
+                'image_id': image_id,
+                'upload_time': upload_time,
+                's3_bucket': bucket,
+                's3_key': key,
+                'content_type': content_type if content_type else 'unknown',
+                'size_bytes': str(size) if size is not None else '0'
+            }
+
+            table.put_item(Item=item)
+            print('Stored metadata for', key)
+
+        except Exception as e:
+            print('Error processing record:', e)
+
+    return {
+        'statusCode': 200,
+        'body': json.dumps({'message': 'Processed', 'records': len(records)})
+    }
